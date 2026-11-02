@@ -6,7 +6,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "start": "electron .",
-    "check": "node --check app.js && node --check engine.js && node --check enemies.js && node --check party-state.js && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/app-monitor.cjs && node --check electron/running-apps.cjs && node --check combat.js && node --check combat-fx.js && node --check augments.js && node --check augment-view.js && node --check work-clock.js && node --check runtime-health.js",
+    "check": "node --check app.js && node --check engine.js && node --check enemies.js && node --check party-state.js && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/app-monitor.cjs && node --check electron/running-apps.cjs && node --check combat.js && node --check brawl.js && node --check leisure.js && node --check combat-fx.js && node --check augments.js && node --check augment-view.js && node --check work-clock.js && node --check runtime-health.js",
     "test": "node --test tests/*.test.cjs"
   },
   "devDependencies": {

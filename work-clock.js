@@ -7,7 +7,7 @@
   const time=parts.hour+':'+parts.minute+':'+parts.second;
   if(!validTime(endTime))return {time,label:'퇴근 시각 입력',remaining:null};
   const [h,m]=endTime.split(':').map(Number),seconds=(h*60+m)*60-(Number(parts.hour)*3600+Number(parts.minute)*60+Number(parts.second));
-  if(seconds<=0)return {time,label:'퇴근 시간입니다',remaining:0};
+  if(seconds<=0)return {time,label:'퇴근',remaining:0};
   const hours=Math.floor(seconds/3600),minutes=Math.floor(seconds%3600/60),s=seconds%60;
   return {time,label:'퇴근까지 '+(hours?hours+'시간 ':'')+minutes+'분 '+String(s).padStart(2,'0')+'초',remaining:seconds};
  }

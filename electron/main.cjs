@@ -13,6 +13,7 @@ if(singleInstance)app.whenReady().then(async()=>{
  const stateFile=path.join(app.getPath('userData'),'widget-position.json');let widgetPosition=null,compactMode=false,positionTimer;try{const state=JSON.parse(await fs.readFile(stateFile,'utf8'));if(Number.isFinite(state.x)&&Number.isFinite(state.y))widgetPosition=state;}catch{}
 
  win=new BrowserWindow({width:1380,height:940,minWidth:420,minHeight:300,transparent:true,frame:false,backgroundColor:'#00000000',title:'아이콘 원정대',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
+ const sendVisibility=()=>{if(!win.isDestroyed())win.webContents.send('window:visibility',win.isVisible()&&!win.isMinimized());};for(const event of ['minimize','restore','hide','show'])win.on(event,sendVisibility);win.webContents.on('did-finish-load',sendVisibility);
  win.on('move',()=>{if(!compactMode)return;clearTimeout(positionTimer);positionTimer=setTimeout(()=>{if(win.isDestroyed())return;const {x,y}=win.getBounds();widgetPosition={x,y};fs.writeFile(stateFile,JSON.stringify(widgetPosition)).catch(()=>{});},400);});
  win.loadFile(path.join(__dirname,'..','index.html'),{query:process.argv.includes('--running-apps')?{source:'running'}:{}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));

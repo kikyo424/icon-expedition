@@ -1,4 +1,4 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const {display,validTime}=require('../work-clock.js');
 test('퇴근 시각은 직접 입력하며 올바른 시각만 받는다',()=>{assert.equal(validTime('18:00'),true);assert.equal(validTime('00:00'),true);for(const value of ['',null,'24:00','17:60','9:00'])assert.equal(validTime(value),false);assert.equal(display(new Date('2026-11-02T08:00:00Z'),'').remaining,null);});
 test('호스트 시간대와 무관하게 한국 시각과 퇴근까지 시간을 계산한다',()=>{const result=display(new Date('2026-11-02T08:30:15Z'),'18:00');assert.equal(result.time,'17:30:15');assert.equal(result.remaining,1785);assert.equal(result.label,'퇴근까지 29분 45초');});
-test('퇴근 시각이 지나면 다음 날까지 세지 않고 퇴근 표시를 한다',()=>{assert.equal(display(new Date('2026-11-02T09:00:00Z'),'18:00').label,'퇴근 시간입니다');assert.equal(display(new Date('2026-11-02T10:00:00Z'),'18:00').remaining,0);});
+test('퇴근 시각이 지나면 다음 날까지 세지 않고 퇴근 표시를 한다',()=>{assert.equal(display(new Date('2026-11-02T09:00:00Z'),'18:00').label,'퇴근');assert.equal(display(new Date('2026-11-02T10:00:00Z'),'18:00').remaining,0);});

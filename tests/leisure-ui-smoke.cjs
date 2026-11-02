@@ -1,0 +1,20 @@
+const {chromium}=require('playwright');const {pathToFileURL}=require('node:url');const path=require('node:path');const assert=require('node:assert/strict');
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{
+ const page=await browser.newPage({viewport:{width:560,height:355}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(pathToFileURL(path.resolve('index.html')).href);await page.evaluate(()=>$('compact').onclick());
+ for(const mode of ['bowling','tower','fishing','farm']){
+  await page.locator('#widget-menu-toggle').click();await page.locator(`[data-widget-mode="${mode}"]`).click();assert.equal(await page.evaluate(()=>started),true);assert.equal(await page.evaluate(()=>leisureState.mode),mode);
+  assert.equal(await page.locator('#widget-turn-buttons').isVisible(),false);assert.ok(await page.locator('.widget-toolbar').evaluate(el=>el.scrollWidth)<=560);
+  assert.equal(await page.locator('.canvas-wrap').evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+  await page.locator('#widget-manual').click();await page.evaluate(()=>start({focus:false}));
+  if(mode==='bowling'){const x=await page.evaluate(()=>leisureState.aim);await page.locator('#game').press('ArrowLeft',{delay:200});assert.ok(await page.evaluate(()=>leisureState.aim)<x);await page.locator('#game').press('Space');assert.equal(await page.evaluate(()=>leisureState.throws),1);}
+  if(mode==='tower'){const w=await page.evaluate(()=>leisureState.active.w);await page.locator('#game').press('q');assert.equal(await page.evaluate(()=>leisureState.active.h),w);await page.locator('#game').press('Space');assert.equal(await page.evaluate(()=>leisureState.active.falling),true);}
+  if(mode==='fishing'){await page.locator('#game').press('Space');assert.equal(await page.evaluate(()=>leisureState.phase),'waiting');await page.evaluate(()=>{leisureState.wait=.01;stepLeisure(.02);});await page.locator('#game').press('Space');assert.equal(await page.evaluate(()=>leisureState.phase),'reeling');await page.locator('#widget-auto').click();await page.evaluate(()=>{for(let i=0;i<500;i++)stepLeisure(1/60);});assert.ok(await page.evaluate(()=>leisureProfile.catches)>0);}
+  if(mode==='farm'){await page.evaluate(()=>{leisureProfile.plots[0]=null;leisureProfile.coins=100;});await page.locator('#game').press('2');await page.locator('#game').press('Space');assert.equal(await page.evaluate(()=>leisureProfile.plots[0].crop),1);await page.locator('#game').press('Space');assert.equal(await page.evaluate(()=>leisureProfile.plots[0].watered),true);}
+  await page.screenshot({path:mode+'-preview.png',omitBackground:true});
+ }
+ const saved=await page.evaluate(()=>{paused=true;saveLeisure();return JSON.stringify(leisureProfile);});await page.reload();assert.equal(await page.evaluate(()=>JSON.stringify(leisureProfile)),saved);await page.evaluate(()=>$('compact').onclick());
+ await page.locator('#widget-menu-toggle').click();await page.locator('[data-widget-mode="farm"]').click();await page.locator('#widget-manual').click();await page.evaluate(()=>{leisureState.plot=0;leisureProfile.plots[0].at=Date.now()-200000;saveLeisure();});await page.locator('#game').press('Space');assert.ok(await page.evaluate(()=>leisureProfile.harvests)>0);
+ for(const m of ['dungeon','jump','battle']){await page.locator('#widget-menu-toggle').click();await page.locator(`[data-widget-mode="${m}"]`).click();assert.equal(await page.evaluate(()=>started),true);}
+ assert.deepEqual(errors,[]);console.log('PASS: four new games, manual controls, automatic fishing, farm watering/harvest, reload persistence, transparent fixed-width widget, existing modes.');
+}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1);});
