@@ -5,7 +5,7 @@ const {promisify}=require('node:util');
 const {createHash}=require('node:crypto');
 const run=promisify(execFile);
 const root=path.resolve(__dirname,'..');
-const runtimeFiles=['index.html','style.css','app.js','engine.js','enemies.js','party-state.js','combat.js','combat-fx.js','brawl.js','augments.js','augment-view.js','work-clock.js','runtime-health.js','leisure.js'];
+const runtimeFiles=['index.html','style.css','app.js','engine.js','enemies.js','party-state.js','combat.js','combat-fx.js','brawl.js','augments.js','augment-view.js','work-clock.js','runtime-health.js','leisure.js','tower-shapes.js'];
 async function main(){
  if(process.platform!=='win32')throw new Error('Windows에서 실행해주세요.');
  const pkg=JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8'));

@@ -6,7 +6,7 @@ const {chromium}=require('playwright');const {pathToFileURL}=require('node:url')
  assert.equal(await page.evaluate(()=>actors.filter(a=>a.source==='running').length),6);assert.equal(await page.evaluate(()=>actors.some(a=>a.id==='app-6')),false);
  assert.equal(await page.evaluate(()=>actors.filter(a=>a.source==='running').every(a=>a.y<460&&a.x<400)),true);
  const before=await page.evaluate(()=>{const a=actors.find(a=>a.id==='app-1');a.hp=40;return a.maxHp;});
- await page.evaluate(()=>{apps=apps.filter(a=>a.id!=='app-0');apps.find(a=>a.id==='app-1').startedAtUnixMs=Date.now()-600001;applyRunningSnapshot(apps);});
+ await page.evaluate(()=>{apps=apps.filter(a=>a.id!=='app-0');const realNow=Date.now;Date.now=()=>RuntimeHealth.sessionStartedAt+600001;applyRunningSnapshot(apps);Date.now=realNow;});
  assert.equal(await page.evaluate(()=>actors.some(a=>a.id==='app-0')),false);assert.equal(await page.evaluate(()=>actors.some(a=>a.id==='app-6')),true);assert.equal(await page.evaluate(()=>selected.length),6);
  assert.ok(await page.evaluate(()=>actors.find(a=>a.id==='app-1').maxHp)>before);assert.ok(await page.evaluate(()=>actors.find(a=>a.id==='app-1').hp<actors.find(a=>a.id==='app-1').maxHp));
  const named=await page.evaluate(()=>{const a=actors.find(a=>a.skinId),fill=ctx.fillText,stroke=ctx.strokeText,calls=[];ctx.fillText=function(text,...args){calls.push(text);return fill.call(this,text,...args);};ctx.strokeText=function(text,...args){calls.push(text);return stroke.call(this,text,...args);};try{drawActor(a);}finally{ctx.fillText=fill;ctx.strokeText=stroke;}return calls.includes(a.name);});assert.equal(named,false);
