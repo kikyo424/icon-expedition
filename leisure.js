@@ -10,20 +10,21 @@
  const fish=[{name:'피라미',icon:'🐟',value:3},{name:'붕어',icon:'🐠',value:6},{name:'황금 잉어',icon:'🐡',value:15},{name:'보물 상자',icon:'🎁',value:30}];
  const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
  function profile(raw){
-  const p={version:2,farmTime:Date.now(),coins:12,catches:0,harvests:0,collection:[0,0,0,0],plots:Array.from({length:6},()=>null)};
+  const p={version:2,farmTime:Date.now(),selectedCrop:0,coins:12,catches:0,harvests:0,collection:[0,0,0,0],plots:Array.from({length:6},()=>null)};
   if(!raw||typeof raw!=='object')return p;
+  if(Number.isInteger(raw.selectedCrop)&&crops[raw.selectedCrop])p.selectedCrop=raw.selectedCrop;
   if(Number.isFinite(raw.farmTime)&&raw.farmTime>=0)p.farmTime=raw.farmTime;
   for(const key of ['coins','catches','harvests'])if(Number.isFinite(raw[key]))p[key]=clamp(Math.floor(raw[key]),0,1e9);
   p.collection=p.collection.map((_,i)=>Number.isFinite(raw.collection?.[i])?clamp(Math.floor(raw.collection[i]),0,1e9):0);
   p.plots=p.plots.map((_,i)=>{const a=raw.plots?.[i];return a&&Number.isInteger(a.crop)&&crops[a.crop]&&Number.isFinite(a.at)?{crop:a.crop,at:Math.max(0,a.at),watered:!!a.watered}:null;});return p;
  }
  function rack(){const pins=[];for(let row=0;row<4;row++)for(let col=0;col<=row;col++)pins.push({x:480+(col-row/2)*46,y:245-row*40,vx:0,vy:0,down:false});return pins;}
- function newBlock(s){const shape=[[108,40],[72,58],[144,30],[90,46]][Math.floor(s.random()*4)];s.active={x:480,y:95,w:shape[0],h:shape[1],angle:0,vy:0,falling:false,icon:s.placed};}
+ function newBlock(s){const shape=[[108,40],[72,58],[144,30],[90,46]][Math.floor(s.random()*4)];s.active={x:480,y:125+shape[1]/2,w:shape[0],h:shape[1],angle:0,vy:0,falling:false,icon:s.placed};}
  function create(mode,p,random=Math.random){const s={mode,profile:p,random,time:0,notice:'',noticeTime:0,done:false,dirty:false};
   if(mode==='bowling')Object.assign(s,{pins:rack(),ball:null,aim:480,power:.75,throws:0,points:0,wait:0});
   if(mode==='tower'){Object.assign(s,{blocks:[],placed:0,misses:0,camera:0,wait:0});newBlock(s);}
   if(mode==='fishing')Object.assign(s,{phase:'idle',wait:0,tension:.45,progress:0,held:false,fish:0});
-  if(mode==='farm')Object.assign(s,{crop:0,plot:0,work:0});return s;
+  if(mode==='farm')Object.assign(s,{crop:p.selectedCrop,plot:0,work:0});return s;
  }
  function say(s,text){s.notice=text;s.noticeTime=2.5;}
  function growth(plot,now){return !plot?0:clamp((now-plot.at)/(crops[plot.crop].time*1000*(plot.watered?.65:1)),0,1);}
@@ -33,6 +34,7 @@
   else if(!plot.watered){plot.watered=true;say(s,'물주기 · 성장 시간 단축');}
   else{say(s,'자라는 중이에요');return false;}s.dirty=true;return true;
  }
+ function setCrop(s,index){s.crop=index;s.profile.selectedCrop=index;s.dirty=true;}
  function action(s,key,now=Date.now()){
   if(s.done)return;
   if(s.mode==='bowling'&&key===' '&&!s.ball&&!s.wait){s.ball={x:s.aim,y:470,vx:(480-s.aim)*.35,vy:-350-s.power*400};s.throws++;}
@@ -42,9 +44,9 @@
    else if(key===' '&&s.phase==='bite'){s.phase='reeling';s.progress=0;s.tension=.45;say(s,'누르면 당기기 · 놓으면 장력 감소');}
    else if(key===' '&&s.phase==='waiting'){s.phase='idle';say(s,'너무 빨랐어요');}
   }
-  if(s.mode==='farm'){now=s.profile.farmTime;if(['1','2','3'].includes(key))s.crop=Number(key)-1;if(key==='q')s.crop=(s.crop+1)%3;if(key===' ')manage(s,s.plot,now);if(key==='ArrowRight'||key==='d')s.plot=(s.plot+1)%6;if(key==='ArrowLeft'||key==='a')s.plot=(s.plot+5)%6;}
+  if(s.mode==='farm'){now=s.profile.farmTime;if(['1','2','3'].includes(key))setCrop(s,Number(key)-1);if(key==='q')setCrop(s,(s.crop+1)%3);if(key===' ')manage(s,s.plot,now);if(key==='ArrowRight'||key==='d')s.plot=(s.plot+1)%6;if(key==='ArrowLeft'||key==='a')s.plot=(s.plot+5)%6;}
  }
- function pointer(s,x,y,now){if(s.mode==='bowling'&&!s.ball){s.aim=clamp(x,350,610);action(s,' ',now);}if(s.mode==='tower'&&s.active&&!s.active.falling){s.active.x=clamp(x,260,700);action(s,' ',now);}if(s.mode==='fishing')action(s,' ',now);if(s.mode==='farm'){now=s.profile.farmTime;if(y<145&&x>260&&x<700){s.crop=clamp(Math.floor((x-260)/147),0,2);return;}const col=Math.floor((x-270)/140),row=Math.floor((y-190)/115);if(col>=0&&col<3&&row>=0&&row<2)manage(s,row*3+col,now);}}
+ function pointer(s,x,y,now){if(s.mode==='bowling'&&!s.ball){s.aim=clamp(x,350,610);action(s,' ',now);}if(s.mode==='tower'&&s.active&&!s.active.falling){s.active.x=clamp(x,260,700);action(s,' ',now);}if(s.mode==='fishing')action(s,' ',now);if(s.mode==='farm'){now=s.profile.farmTime;if(y>=112&&y<=149&&x>=265&&x<696){const index=Math.floor((x-265)/147);if((x-265)%147<137)setCrop(s,index);return;}const col=Math.floor((x-270)/140),row=Math.floor((y-190)/115);if(col>=0&&col<3&&row>=0&&row<2&&(x-270)%140<126&&(y-190)%115<100)manage(s,row*3+col,now);}}
  function step(s,dt,input={},now=Date.now()){
   if(s.done)return;s.time+=dt;if(s.mode==='farm'){s.profile.farmTime+=dt*1000;now=s.profile.farmTime;s.checkpoint=(s.checkpoint||0)+dt;if(s.checkpoint>=5){s.dirty=true;s.checkpoint=0;}};s.noticeTime=Math.max(0,s.noticeTime-dt);const k=input.keys||new Set(),axis=(k.has('ArrowRight')||k.has('d')?1:0)-(k.has('ArrowLeft')||k.has('a')?1:0);
   if(s.mode==='bowling'){
@@ -54,9 +56,9 @@
   }
   if(s.mode==='tower'){
    // Each body carries a center of mass. Narrow/off-center contacts cause rotation and sliding.
-   const top=s.blocks.reduce((v,b)=>Math.min(v,b.y-b.h/2),480);s.camera+=(Math.max(0,210-top)-s.camera)*Math.min(1,dt*3);
+   const top=s.blocks.filter(b=>!b.loose).reduce((v,b)=>Math.min(v,b.y-b.h/2),480);s.camera+=(Math.max(0,300-top)-s.camera)*Math.min(1,dt*3);
    for(const b of s.blocks){if(b.loose){b.vy+=650*dt;b.y+=b.vy*dt;b.x+=b.vx*dt;b.angle+=b.spin*dt;continue;}const base=b.support===-1?{x:480,w:240,y:495,h:30}:s.blocks[b.support];if(!base||base.loose){b.loose=true;b.vy=0;b.vx=(b.x-480)*.2;b.spin=.8;continue;}const offset=b.x-base.x,margin=Math.min(base.w*.42,(base.w+b.w)/2-12);if(Math.abs(offset)>margin){b.angle+=Math.sign(offset)*dt*(.4+Math.abs(offset)/80);b.x+=Math.sign(offset)*dt*18;if(Math.abs(b.angle)>.4){b.loose=true;b.vy=0;b.vx=Math.sign(offset)*70;b.spin=Math.sign(offset)*1.8;}}}
-   const a=s.active;if(a){if(!a.falling){a.y=95-s.camera;a.x=clamp(a.x+axis*240*dt,250,710);if(input.auto&&s.time-s.wait>.85){const base=[...s.blocks].reverse().find(b=>!b.loose);a.x=(base?.x||480)+(s.random()-.5)*Math.min(65,a.w*.55);a.falling=true;}}else{
+   const a=s.active;if(a){if(!a.falling){a.y=125+a.h/2-s.camera;a.x=clamp(a.x+axis*240*dt,250,710);if(input.auto&&s.time-s.wait>.85){const base=[...s.blocks].reverse().find(b=>!b.loose);a.x=(base?.x||480)+(s.random()-.5)*Math.min(65,a.w*.55);a.falling=true;}}else{
     const oldBottom=a.y+a.h/2;a.vy+=650*dt;a.y+=a.vy*dt;let support=null,index=-1,surface=480;
     if(Math.abs(a.x-480)<(240+a.w)/2-6&&oldBottom<=480+2&&a.y+a.h/2>=480)support={x:480,w:240};
     s.blocks.forEach((b,i)=>{const y=b.y-b.h/2;if(!b.loose&&oldBottom<=y+3&&a.y+a.h/2>=y&&Math.abs(a.x-b.x)<(a.w+b.w)/2-5&&(!support||y<surface)){support=b;index=i;surface=y;}});
