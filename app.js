@@ -1,0 +1,196 @@
+'use strict';
+const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d'),W=960,H=560;
+const nativeFillText=ctx.fillText.bind(ctx);
+ctx.fillText=function(...args){ctx.save();const t=ctx.getTransform(),screenScale=Math.hypot(t.a,t.b)*(canvas.clientWidth/canvas.width)||1;ctx.fillStyle='#ffffff';ctx.strokeStyle='#000000';ctx.lineWidth=.8/screenScale;ctx.lineJoin='round';ctx.strokeText(...args);nativeFillText(...args);ctx.restore();};
+function prepareCanvas(){const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1,width=Math.max(1,Math.round(rect.width*dpr)),height=Math.max(1,Math.round(rect.height*dpr));if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}ctx.setTransform(width/W,0,0,height/H,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';}
+
+const defaults=[{id:'folder',name:'문서 폴더',emoji:'📁',role:'든든한 수호자',color:'#e4c36f',hp:160,atk:18},{id:'browser',name:'인터넷 브라우저',emoji:'🌐',role:'푸른 마법사',color:'#83bddd',hp:100,atk:26},{id:'bin',name:'휴지통',emoji:'🗑️',role:'끈질긴 전사',color:'#b6cfac',hp:130,atk:22},{id:'photo',name:'사진첩',emoji:'🌸',role:'날쌘 모험가',color:'#dda5ba',hp:110,atk:24}];
+let roster=window.desktop?[]:defaults.map(x=>({...x})),selected=window.desktop?[]:['folder','browser','bin'],mode='dungeon',auto=true,started=false,paused=false,actors=[],obstacles=[],particles=[],keys=new Set(),floor=1,kills=0,elapsed=0,spawnTimer=0,score=0,transition=0,images=new Map(),sound=false,pendingJump=false,audioContext=null,last=0,save={dungeon:1,jump:0,battle:0};
+try{save={...save,...JSON.parse(localStorage.getItem('icon-expedition-records')||'{}')};}catch{toast('저장된 기록을 읽지 못해 기본 기록으로 시작합니다.');}
+const enemyRoster=EnemyPresets.map(a=>({...a}));let enemySelected=['slime'];try{const saved=JSON.parse(localStorage.getItem('icon-expedition-enemies')||'null');if(Array.isArray(saved)&&saved.some(id=>enemyRoster.some(a=>a.id===id)))enemySelected=saved.filter(id=>enemyRoster.some(a=>a.id===id));}catch{}
+let sourceMode=window.desktop?'running':'desktop',runningBusy=false,sourceGeneration=0,liveWaiting=true;const excludedApps=new Set();let preferences={source:'running',excluded:[],parties:{}};try{const stored=JSON.parse(localStorage.getItem('icon-expedition-preferences')||'null');if(stored&&['running','desktop'].includes(stored.source)){preferences={...preferences,...stored};if(window.desktop)sourceMode=stored.source;for(const id of stored.excluded||[])excludedApps.add(id);}}catch{}
+if(window.desktop&&new URLSearchParams(location.search).get('source')==='running')sourceMode='running';
+let startupWidget=true,turnState=TurnCombat.create(),dungeonRun=DungeonAugments.create(),choiceCache=null;
+function savePreferences(){if(roster.length)preferences.parties[sourceMode]=selected.slice();preferences.source=sourceMode;preferences.excluded=[...excludedApps];try{localStorage.setItem('icon-expedition-preferences',JSON.stringify(preferences));}catch{}}
+
+function partyLimit(){return mode==='jump'?1:sourceMode==='running'?6:mode==='battle'?4:3;}
+const modes={dungeon:{title:'던전 탐험',sub:'Adventure awaits.',description:'아이콘으로 파티를 꾸리고, 미지의 던전을 탐험하세요.',scene:'이끼 낀 지하 회랑',label:'최고 도달 층',start:'탐험 시작',overlay:'원정대를 준비하세요',text:'동료를 최대 3명 선택하고 탐험을 시작하세요.',hint:'턴제 전투 · Space 기본 공격 / Q 고유 스킬 / E 방어 · 직접 조작 시 파티원의 차례에 선택합니다.'},jump:{title:'아이콘 점프',sub:'One more little leap.',description:'작은 도약으로 장애물을 넘어, 새로운 기록에 도전하세요.',scene:'바람 부는 초원',label:'최고 점수',start:'달리기 시작',overlay:'얼마나 멀리 갈 수 있을까요?',text:'캐릭터 한 명을 선택하세요. Space 또는 화면 터치로 점프!',hint:'Space / ↑ / 화면 터치로 점프 · 자동 모드에서는 스스로 점프합니다.'},battle:{title:'배틀 아레나',sub:'Only one remains.',description:'나의 아이콘들이 맞붙는 작은 경기장. 최후의 승자는 누구일까요?',scene:'오래된 숲의 경기장',label:'완료한 경기',start:'배틀 시작',overlay:'오늘의 챔피언은 누구?',text:'참가자를 2~4명 선택하세요. 개인전으로 진행됩니다.',hint:'턴제 배틀 · 직접 조작 시 첫 번째 참가자의 차례에 Space 공격 / Q 스킬 / E 방어'}};
+function toast(message){$('toast').textContent=message;$('toast').classList.add('visible');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').classList.remove('visible'),3500);}
+function record(){let value=mode==='dungeon'?String(save.dungeon).padStart(2,'0'):Math.floor(save[mode]);$('record').replaceChildren(document.createTextNode(value));let unit=document.createElement('span');unit.textContent=mode==='dungeon'?' F':mode==='jump'?' PT':' 회';$('record').append(unit);}
+function persist(){try{localStorage.setItem('icon-expedition-records',JSON.stringify(save));}catch{$('storage-status').textContent='저장 공간이 없어 이번 기록은 유지되지 않습니다';}}
+function log(message){let p=document.createElement('p');p.textContent='› '+message;$('log').prepend(p);while($('log').children.length>12)$('log').lastChild.remove();}
+function imageFor(item){if(images.size>256)images.clear();if(!item.image)return null;const key=item.image;if(!images.has(key)){let img=new Image();img.src=item.image;images.set(key,img);}return images.get(key);}
+function drawRoster(){let list=$('roster');list.replaceChildren();for(const item of roster){let b=document.createElement('button');b.className='character'+(selected.includes(item.id)?' chosen':'');b.setAttribute('aria-pressed',selected.includes(item.id));let icon=document.createElement('span');icon.className='avatar';if(item.image){let img=document.createElement('img');img.src=item.image;img.alt='';icon.append(img);}else icon.textContent=item.emoji;let details=document.createElement('div'),name=document.createElement('div'),role=document.createElement('div');name.className='character-name';name.textContent=item.name;role.className='character-role';const hero=mode==='dungeon'?actors.find(a=>a.id===item.id):null;const job=hero?.job?DungeonAugments.jobs[hero.job]:null;role.textContent=(job?job.name+' · '+job.weapon:(item.active?'사용 중 · ':'')+item.role)+' · HP '+(hero?.maxHp||Math.round(item.hp*RuntimeHealth.factor(item)))+' / ATK '+Math.round(hero?.atk||item.atk);b.title=(item.sourceName||item.name)+' · '+(item.kind||'앱 캐릭터')+(item.source==='running'?' · '+RuntimeHealth.describe(item):'');details.append(name,role);let check=document.createElement('span');check.className='check';check.textContent=selected.includes(item.id)?'✓':'＋';b.append(icon,details,check);b.onclick=()=>{if(started&&sourceMode!=='running'){toast('참가자를 바꾸려면 다시 시작을 눌러주세요.');return;}let max=partyLimit();if(selected.includes(item.id))selected=selected.filter(id=>id!==item.id);else if(selected.length<max)selected.push(item.id);else if(max===1)selected=[item.id];else {toast('최대 '+max+'명까지 선택할 수 있어요.');return;}if(sourceMode==='running'){if(selected.includes(item.id))excludedApps.delete(item.id);else excludedApps.add(item.id);syncLiveActors();}savePreferences();drawRoster();};list.append(b);}const max=partyLimit();$('party-count').textContent=selected.length+' / '+max;$('hud-right').textContent='PARTY '+selected.length+' / '+max;}
+function setMode(next){$('overlay').classList.remove('is-result');if(started&&mode==='jump'){save.jump=Math.max(save.jump,Math.floor(score));persist();}mode=next;document.body.dataset.gameMode=mode;started=false;paused=false;actors=[];particles=[];obstacles=[];turnState=TurnCombat.create();dungeonRun=DungeonAugments.create();choiceCache=null;renderDungeonChoices();floor=1;score=0;elapsed=0;pendingJump=false;document.getElementById("hud-left").textContent=mode==='dungeon'?'ZONE 01 · MOSSY RUINS':mode==='jump'?'WINDY MEADOW':'FOREST ARENA';selected=selected.slice(0,partyLimit());if(mode==='battle'&&selected.length<2)selected=PartyState.reconcile(roster,selected,sourceMode==='running'?excludedApps:[],3);auto=mode!=='jump';updateAuto();const m=modes[mode];$('title').replaceChildren(document.createTextNode(m.title));let sub=document.createElement('span');sub.textContent=m.sub;$('title').append(sub);$('description').textContent=m.description;$('scene-title').textContent=m.scene;$('record-label').textContent=m.label;$('party-heading').textContent=mode==='battle'?'배틀 참가자':mode==='jump'?'나의 러너':'나의 원정대';$('overlay-title').textContent=m.overlay;$('overlay-text').textContent=mode==='dungeon'?'동료를 최대 '+partyLimit()+'명 선택하고 탐험을 시작하세요.':mode==='battle'?'참가자를 2~'+partyLimit()+'명 선택하세요. 개인전으로 진행됩니다.':m.text;$('overlay-start').textContent=m.start+' →';$('overlay').hidden=false;$('pause').textContent='Ⅱ 일시정지';$('run-state').textContent='준비 완료';$('floor').textContent=mode==='dungeon'?'FLOOR 01':mode==='jump'?'ENDLESS RUN':'FREE FOR ALL';document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));$('widget-label').textContent=m.title;document.querySelectorAll('[data-widget-mode]').forEach(button=>{button.setAttribute('aria-pressed',String(button.dataset.widgetMode===mode));});$('enemy-settings').hidden=mode!=='dungeon';$('turn-controls').hidden=mode==='jump';$('build-summary').hidden=mode!=='dungeon';drawRoster();record();}
+function updateAuto(){for(const [id,active] of [['widget-auto',auto],['widget-manual',!auto]]){$(id).classList.toggle('selected',active);$(id).setAttribute('aria-pressed',String(active));}$('auto').classList.toggle('selected',auto);$('manual').classList.toggle('selected',!auto);$('hint').textContent=(auto?'자동 플레이 중 · ':'직접 조작 · ')+modes[mode].hint;keys.clear();}
+function actor(item,x,y,team){return RuntimeHealth.initialize({...item,x,y,team,hp:item.hp,maxHp:item.hp,cooldown:Math.random()*.4,hit:0,alive:true});}
+function drawEnemies(){
+ $('enemy-roster').replaceChildren();
+ for(const item of enemyRoster){const button=document.createElement('button');button.className='enemy-choice'+(enemySelected.includes(item.id)?' selected':'');button.setAttribute('aria-pressed',enemySelected.includes(item.id));button.dataset.enemy=item.id;const img=document.createElement('img');img.src=item.image;img.alt='';const name=document.createElement('span');name.textContent=item.name;button.append(img,name);button.onclick=()=>{if(enemySelected.includes(item.id)){if(enemySelected.length===1){toast('악당은 한 종류 이상 선택해주세요.');return;}enemySelected=enemySelected.filter(id=>id!==item.id);}else enemySelected.push(item.id);try{localStorage.setItem('icon-expedition-enemies',JSON.stringify(enemySelected.filter(id=>EnemyPresets.some(a=>a.id===id))))}catch{}drawEnemies();toast(started?'선택한 악당이 다음 층부터 등장합니다.':'악당 선택을 변경했습니다.');};$('enemy-roster').append(button);}
+}
+function wave(){turnState=TurnCombat.create();const count=Math.min(3+Math.floor(floor/2),9);for(let i=0;i<count;i++){let boss=floor%5===0&&i===0;let hp=(boss?180:48)+floor*10;const choices=enemyRoster.filter(a=>enemySelected.includes(a.id));const skin=choices[(floor-1+i)%choices.length]||EnemyPresets[0];actors.push(actor({id:'enemy-'+floor+'-'+i,skinId:skin.id,name:(boss?'거대 ':'')+skin.name,image:skin.image,color:skin.color,hp,atk:boss?18:7+floor*.8},620+(i%3)*85,160+Math.floor(i/3)*95,1));}TurnCombat.layout(actors,mode);if(floor>1&&!dungeonRun.rewardFloors.includes(floor)){dungeonRun.rewardFloors.push(floor);dungeonRun.pendingReward=floor;}prepareDungeonChoices();log(floor+'층 진입'+(floor%5===0?' · 보스가 나타났습니다!':' · 탐험을 시작합니다.'));}
+function start(options={}){$('overlay').classList.remove('is-result');const minimum=mode==='battle'?2:1;if(selected.length<minimum){toast('아이콘을 '+minimum+'명 이상 선택하세요.');return;}started=true;paused=false;pendingJump=false;floor=1;kills=0;elapsed=0;score=0;transition=0;spawnTimer=1.4;turnState=TurnCombat.create();dungeonRun=DungeonAugments.create();choiceCache=null;particles=[];obstacles=[];actors=selected.map((id,i)=>actor(roster.find(a=>a.id===id),mode==='battle'?480+Math.cos(i/selected.length*Math.PI*2)*240:200,mode==='battle'?280+Math.sin(i/selected.length*Math.PI*2)*160:190+i*90,mode==='battle'?i:0));TurnCombat.layout(actors,mode);if(mode==='dungeon')wave();if(mode==='jump'){actors[0].x=160;actors[0].y=410;actors[0].vy=0;actors[0].grounded=true;}else if(mode==='battle')log('배틀 시작! 최후의 생존자는 누구일까요?');$('overlay').hidden=true;$('pause').textContent='Ⅱ 일시정지';$('run-state').textContent=auto?'자동 플레이 중':'직접 플레이 중';liveWaiting=false;if(options.focus!==false)canvas.focus();}
+function finish(title,text){$('overlay').classList.add('is-result');started=false;keys.clear();$('overlay-title').textContent=title;$('overlay-text').textContent=text;$('overlay-start').textContent='다시 도전 →';$('overlay').hidden=false;$('run-state').textContent='플레이 종료';persist();record();log(title);}
+function burst(x,y,color,text){particles.push({x,y,color,text,life:.8,max:.8});}
+function beep(){if(!sound)return;try{audioContext??=new AudioContext();let o=audioContext.createOscillator(),g=audioContext.createGain();o.connect(g);g.connect(audioContext.destination);o.frequency.value=mode==='jump'?600:180;g.gain.setValueAtTime(.025,audioContext.currentTime);g.gain.exponentialRampToValueAtTime(.001,audioContext.currentTime+.08);o.start();o.stop(audioContext.currentTime+.08);}catch{}}
+function renderDungeonChoices(){
+ const choice=mode==='dungeon'?dungeonRun.choice:null;$('upgrade-panel').hidden=!choice;
+ const party=actors.filter(a=>a.team===0&&a.job);$('build-count').textContent='증강 '+dungeonRun.augments.length+'개';$('build-party').textContent=party.length?party.map(a=>a.name+' · '+DungeonAugments.jobs[a.job].name).join(' / '):'직업을 얻으면 아이콘 옆에 무기가 표시됩니다.';
+ const counts=new Map();for(const id of dungeonRun.augments)counts.set(id,(counts.get(id)||0)+1);$('build-cards').textContent=[...counts].map(([id,count])=>DungeonAugments.cards.find(c=>c.id===id).name+(count>1?' ×'+count:'')).join(' · ');
+ const key=choice?choice.kind+':'+floor+':'+(choice.actorId||'')+':'+choice.options.join(','):'';if(key===choiceCache)return;choiceCache=key;$('upgrade-options').replaceChildren();if(!choice)return;
+ const hero=actors.find(a=>a.id===choice.actorId);$('upgrade-kicker').textContent='CHOOSE AN AUGMENT';$('upgrade-title').textContent=choice.kind==='job'?(hero?.name||'동료')+' · 직업 증강':floor+'층 · 파티 증강 선택';$('upgrade-description').textContent=choice.kind==='job'?'무작위 직업 증강 3개 중 하나를 선택하세요.':'선택한 능력이 현재 파티와 이후 합류하는 동료에게 적용됩니다.';
+ for(const id of choice.options){const item=choice.kind==='job'?DungeonAugments.jobs[id]:DungeonAugments.cards.find(c=>c.id===id);const button=document.createElement('button');button.className='upgrade-card';button.dataset.upgrade=id;const icon=document.createElement('span');icon.className='upgrade-icon';icon.textContent=item.symbol||item.icon;const name=document.createElement('strong');name.textContent=item.name+(item.weapon?' · '+item.weapon:'');const description=document.createElement('small');description.textContent=item.description;button.append(icon,name,description);button.onclick=()=>{applyDungeonChoice(id);prepareDungeonChoices();};$('upgrade-options').append(button);}
+}
+function applyDungeonChoice(id){
+ const choice=dungeonRun.choice;if(!choice||!choice.options.includes(id))return;
+ const party=actors.filter(a=>a.team===0);
+ if(choice.kind==='job'){const hero=party.find(a=>a.id===choice.actorId);if(hero){DungeonAugments.assign(hero,id,dungeonRun);log(hero.name+' · '+DungeonAugments.jobs[id].name+' / '+DungeonAugments.jobs[id].weapon);}}
+ else{DungeonAugments.choose(dungeonRun,id,party);dungeonRun.pendingReward=null;const card=DungeonAugments.cards.find(c=>c.id===id);log('증강 획득 · '+card.name);burst(480,85,'#e8d9a2','증강 · '+card.name);}
+ dungeonRun.choice=null;drawRoster();
+}
+function prepareDungeonChoices(){
+ if(mode!=='dungeon'||!started){renderDungeonChoices();return;}
+ const party=actors.filter(a=>a.team===0);
+ if(!party.some(a=>a.hp>0)){dungeonRun.choice=null;renderDungeonChoices();return;}
+ if(dungeonRun.choice?.kind==='job'&&!party.some(a=>a.id===dungeonRun.choice.actorId))dungeonRun.choice=null;
+ for(let guard=0;guard<12;guard++){
+  if(!dungeonRun.choice){const hero=party.find(a=>!a.job&&a.hp>0);
+   if(hero){const remembered=dungeonRun.classes[hero.id];if(remembered){DungeonAugments.assign(hero,remembered,dungeonRun);continue;}dungeonRun.choice={kind:'job',actorId:hero.id,options:DungeonAugments.offerJobs(dungeonRun,hero.id)};}
+   else if(dungeonRun.pendingReward)dungeonRun.choice={kind:'augment',options:DungeonAugments.offer(dungeonRun,dungeonRun.pendingReward)};
+  }
+  if(!dungeonRun.choice||!auto)break;
+  const choice=dungeonRun.choice;const id=choice.kind==='job'?DungeonAugments.randomJob(choice.options):DungeonAugments.recommendAugment(choice.options,party);applyDungeonChoice(id);
+ }
+ renderDungeonChoices();
+}
+function combatEvents(events){
+ for(const event of events){const source=actors.find(a=>a.id===event.sourceId),target=actors.find(a=>a.id===event.targetId);
+  if(event.type==='damage'&&target)burst(target.x,target.y-42,event.amount?'#f0c5a4':'#a6cbea',event.amount?'−'+event.amount:'방어');
+  if(event.type==='heal'&&target&&event.amount)burst(target.x,target.y-45,'#bce993','+'+event.amount);
+  if(event.type==='shield'&&target)burst(target.x,target.y-40,'#a7d1f0','방벽 +'+event.amount);
+  if(event.type==='status'&&target)burst(target.x,target.y-42,'#d4b3ed',event.text);
+  if(event.type==='defeat'&&target){kills++;log(target.name+' 탈락');}
+  if(event.type==='action'&&source){const targets=event.targetIds.map(id=>actors.find(a=>a.id===id)).filter(Boolean);const position=TurnCombat.visualPosition(source);source.guardAnim=event.name==='방어';source.animDuration=source.job==='warrior'?(event.skill?.55:.35):source.job==='rogue'?(event.skill?.35:.18):event.skill?.9:.65;source.attackTime=source.animDuration;const aim=targets[0]||source;const distance=Math.hypot(aim.x-position.x,aim.y-position.y)||1;source.attackDx=(aim.x-position.x)/distance;source.attackDy=(aim.y-position.y)/distance;particles.push({kind:'combat',style:event.style,targets:targets.map(a=>({x:a.x,y:a.y,support:event.supportIds?.includes(a.id)})),x:position.x,y:position.y,color:source.color,skill:event.skill,life:event.skill?.95:.65,max:event.skill?.95:.65});beep();}
+ }
+}
+function updateTurnUI(){
+ const current=actors.find(a=>a.id===turnState.currentId),manual=started&&!paused&&!dungeonRun.choice&&turnState.phase==='waiting'&&current&&TurnCombat.isManual(current,actors,mode,auto);
+ $('turn-label').textContent='행동 선택';
+ $('turn-next').textContent=current?'기력 '+(current.energy||0)+'/3 · 다음: '+turnState.queue.map(id=>actors.find(a=>a.id===id&&a.hp>0)?.name).filter(Boolean).slice(0,4).join(' → '):'기본 공격·방어로 기력 +1 · 스킬에 기력 2 사용';
+ for(const id of ['turn-attack','turn-guard','widget-attack','widget-guard'])$(id).disabled=!manual;
+ for(const id of ['turn-skill','widget-skill'])$(id).disabled=!manual||(current?.energy||0)<2;
+ $('turn-skill').title=current?TurnCombat.profile(current).skill+' · 기력 2 필요':'차례가 오면 사용합니다';
+ $('widget-turn-buttons').hidden=auto||mode==='jump';
+}
+function chooseAction(command){if(!started||paused||mode==='jump')return;if(!TurnCombat.request(turnState,actors,mode,auto,command)){toast(command==='skill'?'스킬은 내 차례에 기력 2가 필요합니다.':'직접 조작 모드에서 내 차례에 선택하세요.');}updateTurnUI();}
+function fight(dt){
+ if(mode==='dungeon'){prepareDungeonChoices();if(dungeonRun.choice)return;}
+ for(const a of actors){a.meleeReach=(iconDisplaySize(a)+12)*W/(canvas.clientWidth||W);a.attackTime=Math.max(0,(a.attackTime||0)-dt);a.hit=Math.max(0,(a.hit||0)-dt);}
+ combatEvents(TurnCombat.tick(turnState,actors,dt,mode,auto));
+ if(turnState.phase!=='ready')return;
+ if(mode==='dungeon'){
+  if(!actors.some(a=>a.team===0&&a.hp>0)){finish('원정 종료',floor+'층까지 도달했습니다. 파티를 정비하고 다시 도전하세요.');return;}
+  if(!actors.some(a=>a.team===1&&a.hp>0)){transition+=dt;if(transition>1.3){floor++;save.dungeon=Math.max(save.dungeon,floor);persist();record();actors=actors.filter(a=>a.team===0);for(const a of actors){a.hp=Math.min(a.maxHp,a.hp+a.maxHp*.3);a.poison=null;a.weakened=0;}wave();transition=0;}}
+ }else{const living=actors.filter(a=>a.hp>0);if(living.length<=1){save.battle++;finish(living[0]?living[0].name+' 우승!':'무승부!','다른 참가자로 새로운 경기를 시작해보세요.');}}
+}
+
+function jump(dt){const p=actors[0];score+=dt*10;const speed=290+Math.min(score*.65,230);spawnTimer-=dt;if(spawnTimer<=0){obstacles.push({x:1000,y:410,w:28+Math.random()*22,h:36+Math.random()*32});spawnTimer=1.05+Math.random()*.85;}const nearest=obstacles.find(o=>o.x+o.w>p.x-18);const trigger=auto?nearest&&nearest.x-p.x<speed*.48&&nearest.x>p.x:keys.has(' ')||keys.has('ArrowUp')||keys.has('w');GameMath.stepJump(p,dt,trigger||(!auto&&pendingJump));pendingJump=false;keys.delete(' ');keys.delete('ArrowUp');keys.delete('w');for(const o of obstacles){o.x-=speed*dt;if(GameMath.overlap({x:p.x-iconDisplaySize(p)*W/(canvas.clientWidth||W)*.35,y:p.y-iconDisplaySize(p)*H/(canvas.clientHeight||H)*.9,w:iconDisplaySize(p)*W/(canvas.clientWidth||W)*.7,h:iconDisplaySize(p)*H/(canvas.clientHeight||H)*.85},{x:o.x,y:o.y-o.h,w:o.w,h:o.h})){save.jump=Math.max(save.jump,Math.floor(score));finish('멋진 달리기였어요!',Math.floor(score)+'점 · 최고 기록 '+save.jump+'점');beep();return;}}obstacles=obstacles.filter(o=>o.x>-80);}
+function background(){if(document.body.classList.contains('compact'))return; ctx.fillStyle=mode==='jump'?'#1b2a22':'#18221b';ctx.fillRect(0,0,W,H);if(mode==='jump'){ctx.fillStyle='#283b2b';for(let i=0;i<9;i++){let x=(i*160-elapsed*15)%1440;ctx.beginPath();ctx.moveTo(x-150,410);ctx.lineTo(x,200+i%3*35);ctx.lineTo(x+180,410);ctx.fill();}ctx.fillStyle='#b2c19b';ctx.beginPath();ctx.arc(785,100,33,0,Math.PI*2);ctx.fill();ctx.fillStyle='#31452c';ctx.fillRect(0,412,W,148);ctx.fillStyle='#90a66c';ctx.fillRect(0,410,W,3);ctx.fillStyle='#6a8050';for(let i=0;i<35;i++)ctx.fillRect((i*43-elapsed*90)%1000,440+(i%5)*15,8,2);return;}for(let y=0;y<14;y++)for(let x=0;x<24;x++){ctx.fillStyle=(x+y)%2?'#1b271e':'#1e2a20';ctx.fillRect(x*40+1,y*40+1,38,38);if((x*13+y*7)%17===0){ctx.fillStyle='#34422b';ctx.fillRect(x*40+8,y*40+18,9,3);}}ctx.fillStyle='#2f3e2b';ctx.fillRect(40,56,880,12);ctx.fillRect(40,492,880,12);ctx.fillRect(40,56,12,448);ctx.fillRect(908,56,12,448);for(const [x,y] of [[62,78],[860,78],[62,452],[860,452]]){ctx.fillStyle='#465139';ctx.fillRect(x,y,34,30);ctx.fillStyle='#65704c';ctx.fillRect(x+3,y,28,6);}for(const x of [130,810]){let g=ctx.createRadialGradient(x,80,0,x,80,110);g.addColorStop(0,'#d5ab4b22');g.addColorStop(1,'#d5ab4b00');ctx.fillStyle=g;ctx.fillRect(x-110,0,220,200);ctx.fillStyle='#d6b460';ctx.fillRect(x-4,76,8,12);}if(mode==='battle'){ctx.strokeStyle='#a2b47725';ctx.lineWidth=2;ctx.beginPath();ctx.arc(480,280,180,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.arc(480,280,70,0,Math.PI*2);ctx.stroke();}}
+function iconDisplaySize(a){return (a.iconSizePx||roster.find(r=>r.iconSizePx)?.iconSizePx||48)/(window.devicePixelRatio||1);}
+function combatSpacing(){const size=Math.max(...actors.map(iconDisplaySize),32);return Math.max(84,(size+20)*W/(canvas.clientWidth||W));}
+function drawActor(a){
+ if(a.hp<=0)return;
+ const jumpMode=mode==='jump',size=iconDisplaySize(a),half=size/2,position=TurnCombat.visualPosition(a),y=jumpMode?a.y-half*H/(canvas.clientHeight||H):position.y;
+ ctx.save();ctx.translate(position.x,y);ctx.scale(W/(canvas.clientWidth||W),H/(canvas.clientHeight||H));ctx.globalAlpha=1;
+ ctx.fillStyle='#0005';ctx.beginPath();ctx.ellipse(0,half+3,half*.85,4,0,0,Math.PI*2);ctx.fill();
+ if(a.id===turnState.currentId||a.active||(a===actors[0]&&!auto)){ctx.strokeStyle='#c7ed96';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(0,half+3,half+5,6,0,0,Math.PI*2);ctx.stroke();}
+ ctx.save();if(mode!=='jump')CombatFX.pose(ctx,a,a.guardAnim?'guard':TurnCombat.profile(a).style);const image=imageFor(a);
+ if(image&&image.complete&&image.naturalWidth){const scale=size/Math.max(image.naturalWidth,image.naturalHeight),iw=image.naturalWidth*scale,ih=image.naturalHeight*scale;ctx.drawImage(image,-iw/2,-ih/2,iw,ih);}
+ else if(a.source==='desktop'){ctx.fillStyle='#e7ebdd';ctx.fillRect(-half*.7,-half,size*.7,size);ctx.fillStyle='#45553b';ctx.font='bold '+Math.round(size*.55)+'px system-ui';ctx.textAlign='center';ctx.fillText('?',0,size*.22);}
+ else{ctx.textAlign='center';ctx.font=size+'px "Segoe UI Emoji",sans-serif';ctx.fillText(a.emoji||'👾',0,half*.8);}
+ if(a.job&&mode==='dungeon')AugmentView.weapon(ctx,a,size);ctx.restore();if(a.hit>0){ctx.strokeStyle='#fff0bc';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,half+3,0,Math.PI*2);ctx.stroke();}
+ if(!jumpMode){const bar=Math.max(30,size);ctx.fillStyle='#0b130f';ctx.fillRect(-bar/2,-half-10,bar,3);ctx.fillStyle=a.color;ctx.fillRect(-bar/2,-half-10,bar*a.hp/a.maxHp,3);ctx.textAlign='center';ctx.font='9px system-ui';ctx.lineWidth=3;ctx.strokeStyle='#101810';for(let i=0;i<3;i++){ctx.fillStyle=i<(a.energy||0)?'#e5d891':'#72836766';ctx.beginPath();ctx.arc(-8+i*8,half+11,2,0,Math.PI*2);ctx.fill();}if(a.shield>0){ctx.strokeStyle='#a2ceee';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,half+6,0,Math.PI*2);ctx.stroke();}if(a.poison?.turns>0){ctx.fillStyle='#b6dc86';ctx.font='11px "Malgun Gothic",sans-serif';ctx.fillText('독 '+a.poison.turns,0,-half-16);}}
+ ctx.restore();
+}
+function draw(){prepareCanvas();ctx.clearRect(0,0,W,H);background();if(!started&&!actors.length){const preview=selected.map(id=>roster.find(a=>a.id===id));preview.forEach((a,i)=>drawActor(actor(a,mode==='jump'?180:330+i*140,mode==='jump'?410:290,0)));}else [...actors].sort((a,b)=>a.y-b.y).forEach(drawActor);for(const o of obstacles){ctx.fillStyle='#b2ba83';ctx.fillRect(o.x,o.y-o.h,o.w,o.h);ctx.fillStyle='#7e915e';ctx.fillRect(o.x+5,o.y-o.h+4,6,o.h-5);ctx.fillRect(o.x-9,o.y-o.h+13,9,9);ctx.fillRect(o.x+o.w,o.y-o.h+23,8,8);}for(const p of particles){if(p.kind==='combat'){CombatFX.draw(ctx,p);continue;}ctx.globalAlpha=Math.max(0,p.life/p.max);ctx.fillStyle=p.color;ctx.font='600 '+Math.round(13*W/(canvas.clientWidth||W))+'px "Malgun Gothic",sans-serif';ctx.textAlign='center';if(p.kind==='attack'){const t=1-p.life/p.max;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.toX,p.toY);ctx.stroke();ctx.fillText(p.glyph,p.x+(p.toX-p.x)*t,p.y+(p.toY-p.y)*t);}else ctx.fillText(p.text,p.x,p.y);ctx.globalAlpha=1;}if(mode==='jump'&&actors.length){ctx.fillStyle='#ffffff';ctx.font='bold 30px monospace';ctx.textAlign='right';ctx.fillText(String(Math.floor(score)).padStart(5,'0'),880,85);}if(paused){ctx.fillStyle='#0b130e66';if(!document.body.classList.contains('compact'))ctx.fillRect(0,0,W,H);ctx.fillStyle='#d0e6b5';ctx.textAlign='center';ctx.font='600 '+Math.round(20*W/(canvas.clientWidth||W))+'px "Malgun Gothic",sans-serif';ctx.fillText('잠시 쉬어가는 중',W/2,H/2);}}
+function frame(time){let dt=Math.min((time-last)/1000||0,.04);last=time;if(started&&!paused){elapsed+=dt;if(mode==='jump')jump(dt);else fight(dt);particles.forEach(p=>{p.life-=dt;if(p.kind!=='attack'&&p.kind!=='combat')p.y-=dt*35;});particles=particles.filter(p=>p.life>0);$('floor').textContent=mode==='dungeon'?'FLOOR '+String(floor).padStart(2,'0'):mode==='jump'?'SCORE '+Math.floor(score):'ALIVE '+actors.filter(a=>a.hp>0).length;$('hud-left').textContent=mode==='dungeon'?'ZONE '+String(floor).padStart(2,'0')+' · MOSSY RUINS':mode==='jump'?'WINDY MEADOW · '+Math.floor(elapsed)+'s':'FOREST ARENA · '+Math.floor(elapsed)+'s';}updateTurnUI();draw();requestAnimationFrame(frame);}
+const widgetParties={};
+function switchWidgetMode(next){
+ if(next===mode)return;widgetParties[mode]=selected.slice();
+ setMode(next);selected=PartyState.reconcile(roster,widgetParties[next]||selected,sourceMode==='running'?excludedApps:[],partyLimit(),preferences.parties[sourceMode]||[]);drawRoster();
+ const ready=selected.length>=(mode==='battle'?2:1);liveWaiting=sourceMode==='running'&&!ready;
+ if(ready)start({focus:mode==='jump'});
+ else{$('overlay-title').textContent=mode==='battle'?'배틀에는 동료 2명이 필요해요':'참가할 아이콘이 없습니다';$('overlay-text').textContent=sourceMode==='running'?'앱을 더 열면 자동으로 시작합니다.':'↗에서 참가할 아이콘을 선택해주세요.';}
+ $('widget-pause').textContent=started?'Ⅱ':'▶';updateTurnUI();
+}
+for(const button of document.querySelectorAll('[data-widget-mode]'))button.onclick=()=>switchWidgetMode(button.dataset.widgetMode);
+document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));$('overlay-start').onclick=start;$('auto').onclick=()=>{auto=true;updateAuto();if(started)$('run-state').textContent='자동 플레이 중';};$('manual').onclick=()=>{auto=false;updateAuto();if(started)$('run-state').textContent='직접 플레이 중';canvas.focus();};$('pause').onclick=()=>{if(!started)return;paused=!paused;keys.clear();$('pause').textContent=paused?'▶ 계속하기':'Ⅱ 일시정지';$('run-state').textContent=paused?'일시정지':auto?'자동 플레이 중':'직접 플레이 중';};$('restart').onclick=()=>setMode(mode);
+canvas.addEventListener('keydown',e=>{if(mode!=='jump'&&!e.repeat&&[' ','q','e','Q','E'].includes(e.key)){e.preventDefault();chooseAction(e.key===' '?'attack':e.key.toLowerCase()==='q'?'skill':'guard');return;}if([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d'].includes(e.key)){e.preventDefault();keys.add(e.key);if(mode==='jump'&&!e.repeat&&[' ','ArrowUp','w'].includes(e.key))pendingJump=true;}if(e.key==='Escape'&&started)$('pause').click();});window.addEventListener('keyup',e=>keys.delete(e.key));window.addEventListener('blur',()=>keys.clear());canvas.addEventListener('pointerdown',()=>{canvas.focus();if(mode==='jump'&&started&&!paused&&!auto)pendingJump=true;});
+$('sound').onclick=()=>{sound=!sound;$('sound').textContent='소리 '+(sound?'ON':'OFF');if(sound)beep();};$('pin').onclick=async()=>{if(!window.desktop){toast('항상 위 기능은 데스크톱 앱에서 사용할 수 있습니다.');return;}try{let pinned=await window.desktop.togglePin();$('pin').textContent='항상 위 '+(pinned?'ON':'OFF');}catch{toast('창 고정 설정을 변경하지 못했습니다.');}};
+$('compact').onclick=async()=>{document.body.classList.toggle('compact');const compact=document.body.classList.contains('compact');if(window.desktop){await window.desktop.setCompact(compact);if(compact)$('pin').textContent='항상 위 ON';}$('widget-label').textContent=modes[mode].title;toast(compact?'일반 화면으로 돌아가려면 Esc를 누르세요.':'일반 화면으로 돌아왔습니다.');};window.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('compact')){document.body.classList.remove('compact');window.desktop?.setCompact(false);}});
+function updateSourceUI(){
+ $('source-running').classList.toggle('selected',sourceMode==='running');$('source-desktop').classList.toggle('selected',sourceMode==='desktop');
+ $('live-note').textContent=sourceMode==='running'?'열린 앱이 자동 합류합니다. 최대 6명, 나머지는 대기합니다. 클릭으로 참가·제외할 수 있어요.':'바탕화면의 파일과 폴더를 캐릭터로 선택합니다.';
+ $('import').textContent=sourceMode==='running'?'↻ 실행 중인 앱 새로고침':'↻ 바탕화면 새로고침';
+}
+function syncLiveActors(){
+ const ids=new Set(selected);actors=actors.filter(a=>a.source!=='running'||ids.has(a.id));
+ if(!started){for(const a of actors.filter(a=>a.source==='running')){const item=roster.find(item=>item.id===a.id);if(item){a.active=item.active;RuntimeHealth.update(a,item);}}return;}
+ for(const id of selected){const item=roster.find(a=>a.id===id);const existing=actors.find(a=>a.id===id);if(existing){existing.active=item.active;existing.image=item.image;existing.iconSizePx=item.iconSizePx;RuntimeHealth.update(existing,item);continue;}
+ const n=actors.filter(a=>a.source==='running').length;const team=mode==='battle'?Math.max(-1,...actors.map(a=>a.team))+1:0;
+ const added=actor(item,160,130+n*90,team);if(mode==='jump'){added.y=410;added.vy=0;added.grounded=true;}actors.push(added);
+ }
+ TurnCombat.layout(actors,mode);if(mode==='dungeon')prepareDungeonChoices();if(!actors.some(a=>a.source==='running')){started=false;liveWaiting=true;$('overlay').hidden=false;$('overlay-title').textContent='동료 앱을 기다리는 중';$('overlay-text').textContent='프로그램을 열면 다시 모험을 시작합니다.';}
+}
+function applyRunningSnapshot(items){
+ const previous=new Set(roster.filter(a=>a.source==='running').map(a=>a.id));for(const item of items){if(!Number.isFinite(item.startedAtUnixMs)||item.startedAtUnixMs<=0)item.startedAtUnixMs=roster.find(a=>a.id===item.id)?.startedAtUnixMs||Date.now();}
+ const incoming=new Set(items.map(a=>a.id));
+ for(const item of items)if(!previous.has(item.id))log(item.name+' 합류'+(selected.length>=partyLimit()?' · 대기':''));
+ for(const old of roster.filter(a=>a.source==='running'))if(!incoming.has(old.id)){delete dungeonRun.classes[old.id];log(old.name+' 귀환');}
+ roster=items;selected=PartyState.reconcile(items,selected,excludedApps,partyLimit(),preferences.parties.running||[]);savePreferences();
+ syncLiveActors();drawRoster();$('desktop-summary').textContent='실행 중인 앱 '+items.length+'개 · 참가 '+selected.length+'명';
+ $('party-info').textContent='실행한 앱이 모험가가 됩니다. 앱 종료 시 귀환하고, 현재 사용하는 앱은 발밑 테두리로 표시됩니다.';
+}
+async function loadRunning(){
+ if(!window.desktop?.getRunningApps){toast('실행 중인 앱은 데스크톱 버전에서 연결할 수 있어요.');return;}
+ if(runningBusy||sourceMode!=='running')return;runningBusy=true;const generation=sourceGeneration;
+ $('import').disabled=true;
+ try{const items=await window.desktop.getRunningApps();if(sourceMode!=='running'||generation!==sourceGeneration)return;
+ applyRunningSnapshot(items);
+ if(startupWidget){startupWidget=false;if(!document.body.classList.contains('compact'))await $('compact').onclick();}if(liveWaiting&&selected.length>=(mode==='battle'?2:1)){start({focus:false});}
+ else if(!items.length){$('overlay-title').textContent='사용할 프로그램을 열어주세요';$('overlay-text').textContent='창이 있는 앱을 찾으면 자동으로 파티를 구성합니다.';}
+ }catch{if(sourceMode==='running')$('desktop-summary').textContent='앱 연결 실패 · 새로고침으로 다시 시도해주세요';}
+ finally{runningBusy=false;$('import').disabled=false;updateSourceUI();if(sourceMode==='running'&&generation!==sourceGeneration)queueMicrotask(loadRunning);}
+}
+async function setSource(next){
+ if(!window.desktop){toast('앱·바탕화면 연결은 데스크톱 버전에서 사용할 수 있어요.');return;}savePreferences();sourceGeneration++;sourceMode=next;roster=[];selected=[];setMode(mode);liveWaiting=true;startupWidget=false;updateSourceUI();
+ if(next==='running')await loadRunning();else await loadDesktop();
+}
+async function loadDesktop(){
+ if(!window.desktop){toast('실제 파일 캐릭터는 데스크톱 앱에서 사용할 수 있어요.');return;}
+ if(started){toast('다시 시작을 눌러 게임을 멈춘 뒤 새로고침하세요.');return;}
+ const generation=sourceGeneration;const button=$('import');button.disabled=true;button.textContent='바탕화면 친구들을 찾는 중…';$('overlay-start').disabled=true;
+ try{
+  const items=await window.desktop.getIcons();if(sourceMode!=='desktop'||generation!==sourceGeneration)return;
+  roster=[...items,...roster.filter(a=>a.id.startsWith('upload-'))];images.clear();
+  selected=selected.filter(id=>roster.some(a=>a.id===id));
+  selected=PartyState.reconcile(roster,selected,[],partyLimit(),preferences.parties.desktop||[]);savePreferences();
+  drawRoster();
+  $('desktop-summary').textContent='내 바탕화면 · '+items.length+'개의 파일 캐릭터';
+  $('party-info').textContent='파일의 아이콘이 곧 캐릭터의 모습입니다. 파일 종류에 따라 역할과 능력치가 달라져요.';
+  log(items.length+'개의 실제 바탕화면 파일이 모험가가 되었습니다.');if(startupWidget){startupWidget=false;if(!document.body.classList.contains('compact'))await $('compact').onclick();if(items.length)start({focus:false});}
+  toast(items.length?items.length+'명의 바탕화면 친구를 만났습니다.':'바탕화면 항목이 없습니다. 이미지로 캐릭터를 추가해주세요.');
+ }catch{if(sourceMode!=='desktop'||generation!==sourceGeneration)return;toast('바탕화면을 읽지 못했습니다. 새로고침으로 다시 시도해주세요.');$('desktop-summary').textContent='바탕화면을 읽지 못했습니다';}
+ finally{button.disabled=false;updateSourceUI();$('overlay-start').disabled=false;}
+}
+$('import').onclick=()=>sourceMode==='running'?loadRunning():loadDesktop();$('source-running').onclick=()=>setSource('running');$('source-desktop').onclick=()=>setSource('desktop');setInterval(()=>{if(sourceMode==='running')loadRunning();},5000);
+$('upload').onchange=async e=>{if(sourceMode==='running'){toast('이미지 캐릭터는 바탕화면 파일 모드에서 추가해주세요.');e.target.value='';return;}if(started){toast('게임을 멈춘 뒤 캐릭터를 추가해주세요.');e.target.value='';return;}for(const f of [...e.target.files].slice(0,12)){if(!f.type.startsWith('image/'))continue;if(f.size>3*1024*1024){toast('이미지는 3MB 이하로 추가해주세요.');continue;}await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>{roster.push({...defaults[roster.length%4],id:'upload-'+crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:reader.result});resolve();};reader.onerror=resolve;reader.readAsDataURL(f);});}drawRoster();e.target.value='';};
+$('widget-auto').onclick=()=>{$('auto').onclick();updateTurnUI();};$('widget-manual').onclick=()=>{$('manual').onclick();updateTurnUI();};
+$('upgrade-auto').onclick=()=>{auto=true;updateAuto();prepareDungeonChoices();};
+let leaveTime='';try{const savedTime=localStorage.getItem('icon-expedition-leave-time');if(WorkClock.validTime(savedTime))leaveTime=savedTime;}catch{}
+function refreshClock(){const data=WorkClock.display(new Date(),leaveTime);$('clock-now').textContent=data.time;$('clock-now').dateTime=new Date().toISOString();$('clock-until').textContent=data.label;$('clock-until').title=(leaveTime?'퇴근 시각 '+leaveTime+' · ':'')+'클릭해서 직접 입력';}
+$('clock-until').onclick=()=>{$('clock-editor').hidden=!$('clock-editor').hidden;if(!$('clock-editor').hidden){$('leave-at').value=leaveTime;$('leave-at').focus();}};
+$('clock-editor').onsubmit=e=>{e.preventDefault();const value=$('leave-at').value;if(value&&!WorkClock.validTime(value)){toast('퇴근 시각을 올바르게 입력해주세요.');return;}leaveTime=value;try{if(value)localStorage.setItem('icon-expedition-leave-time',value);else localStorage.removeItem('icon-expedition-leave-time');}catch{}$('clock-editor').hidden=true;refreshClock();};
+$('clock-editor').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();$('clock-editor').hidden=true;}});$('clock-cancel').onclick=()=>{$('clock-editor').hidden=true;};refreshClock();setInterval(refreshClock,1000);
+for(const [command,ids] of Object.entries({attack:['turn-attack','widget-attack'],skill:['turn-skill','widget-skill'],guard:['turn-guard','widget-guard']}))for(const id of ids)$(id).onclick=()=>{chooseAction(command);canvas.focus({preventScroll:true});};
+$('widget-expand').onclick=()=>$('compact').onclick();$('widget-pause').onclick=()=>{if(!started)start();else $('pause').click();$('widget-pause').textContent=paused?'▶':'Ⅱ';};$('widget-close').onclick=() =>window.desktop?window.desktop.windowAction('close'):$('compact').click();$('close').onclick=()=>window.desktop?.windowAction('close');$('minimize').onclick=()=>window.desktop?.windowAction('minimize');$('enemy-upload').onchange=async e=>{for(const file of [...e.target.files].slice(0,8)){if(!file.type.startsWith('image/'))continue;if(file.size>3*1024*1024){toast('악당 이미지는 3MB 이하로 추가해주세요.');continue;}await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>{const id='custom-enemy-'+crypto.randomUUID();enemyRoster.push({id,name:file.name.replace(/\.[^.]+$/,''),color:'#dda6a6',image:reader.result});enemySelected.push(id);resolve();};reader.onerror=resolve;reader.readAsDataURL(file);});}drawEnemies();e.target.value='';toast('악당 이미지를 추가했습니다. 다음 층부터 등장합니다.');};drawEnemies();setMode('dungeon');requestAnimationFrame(frame);updateSourceUI();if(window.desktop){if(sourceMode==='running')loadRunning();else loadDesktop();}else $('desktop-summary').textContent='브라우저 체험 · 데스크톱 앱에서 내 파일을 만나세요';

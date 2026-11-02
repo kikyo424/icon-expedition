@@ -1,0 +1,28 @@
+const {chromium}=require('playwright');const {pathToFileURL}=require('node:url');const path=require('node:path');const assert=require('node:assert/strict');
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{
+ const page=await browser.newPage({viewport:{width:560,height:355}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(pathToFileURL(path.resolve('index.html')).href);
+ await page.evaluate(async()=>{await document.getElementById('compact').onclick();start({focus:false});});
+ await page.locator('#widget-manual').click();assert.equal(await page.evaluate(()=>auto),false);assert.equal(await page.locator('#widget-manual').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('#widget-turn-buttons').isVisible(),true);
+ const manualWidth=await page.locator('.widget-toolbar').evaluate(el=>el.scrollWidth);assert.ok(manualWidth<=560);
+ await page.locator('#widget-auto').click();assert.equal(await page.evaluate(()=>auto),true);assert.equal(await page.locator('#auto').evaluate(el=>el.classList.contains('selected')),true);assert.equal(await page.locator('#widget-turn-buttons').isVisible(),false);
+ await page.locator('[data-widget-mode="jump"]').click();
+ assert.equal(await page.evaluate(()=>mode==='jump'&&started&&actors.length===1&&document.body.classList.contains('compact')),true);
+ await page.locator('#game').press('Space');await page.waitForTimeout(150);
+ assert.equal(await page.evaluate(()=>actors[0].grounded),false);
+ await page.locator('#widget-auto').click();assert.equal(await page.evaluate(()=>auto),true);await page.locator('#widget-manual').click();assert.equal(await page.evaluate(()=>auto),false);assert.equal(await page.locator('#widget-turn-buttons').isVisible(),false);
+ await page.evaluate(()=>score=123.4);
+ await page.locator('[data-widget-mode="battle"]').click();
+ assert.equal(await page.evaluate(()=>mode==='battle'&&started&&actors.length>=2&&actors.length<=4&&save.jump>=123),true);
+ assert.equal(await page.locator('[data-widget-mode="battle"]').getAttribute('aria-pressed'),'true');
+ await page.locator('[data-widget-mode="dungeon"]').click();
+ assert.equal(await page.evaluate(()=>mode==='dungeon'&&started&&selected.length===3&&actors.some(a=>a.team===1)),true);
+ await page.screenshot({path:'widget-games-preview.png',omitBackground:true});
+ assert.equal(await page.locator('.sidebar').isVisible(),false);
+ assert.equal(await page.locator('.widget-toolbar').evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+ const width=await page.locator('.widget-toolbar').evaluate(el=>el.scrollWidth);assert.ok(width<=560);
+ await page.evaluate(()=>{roster=[roster[0]];selected=[roster[0].id];});
+ await page.locator('[data-widget-mode="battle"]').click();
+ assert.equal(await page.evaluate(()=>started),false);assert.match(await page.locator('#overlay-title').textContent(),/2명/);
+ assert.deepEqual(errors,[]);console.log('PASS: compact game switching, immediate start, jump input, score retention, party restoration, insufficient players, transparent toolbar fits fixed width.');
+}finally{await browser.close();}})().catch(error=>{console.error(error);process.exit(1);});

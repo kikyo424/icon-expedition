@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+tests/.profiles/
+/*-preview.png
+/preview.png
+.publish/
+.env
+.env.*

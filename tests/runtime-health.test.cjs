@@ -1,0 +1,5 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');const R=require('../runtime-health.js');
+const now=1800000000000;
+test('실행 5분마다 체력 5% 증가, 최대 2배까지만 증가한다',()=>{const item={source:'running',startedAtUnixMs:now};assert.equal(R.factor(item,now+R.STEP_MS-1),1);assert.equal(R.factor(item,now+R.STEP_MS),1.05);assert.equal(R.factor(item,now+R.STEP_MS*2),1.1);assert.equal(R.factor(item,now+R.STEP_MS*100),2);assert.equal(R.factor({...item,source:'desktop'},now+R.STEP_MS*100),1);});
+test('갱신 시 직업·증강 체력과 입은 피해를 유지하며 증가분만 회복한다',()=>{const item={source:'running',startedAtUnixMs:now-R.STEP_MS*6};const a=R.initialize({...item,hp:100,maxHp:100},now);assert.equal(a.maxHp,130);a.maxHp*=2;a.hp=70;R.update(a,item,now+R.STEP_MS);assert.equal(a.maxHp,270);assert.equal(a.hp,80);R.update(a,item,now+R.STEP_MS);assert.equal(a.hp,80);assert.equal(a.maxHp,270);});
+test('탈락자를 부활시키지 않고 앱 재실행으로 실행 시간이 초기화되어도 체력이 유효하다',()=>{const a={source:'running',hp:0,maxHp:200,uptimeHealthFactor:2};R.update(a,{source:'running',startedAtUnixMs:now},now);assert.equal(a.maxHp,100);assert.equal(a.hp,0);assert.equal(R.factor({source:'running',startedAtUnixMs:now+60000},now),1);});
