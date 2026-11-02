@@ -1,0 +1,9 @@
+const {_electron}=require('playwright');const assert=require('node:assert/strict');const path=require('node:path');
+(async()=>{assert.ok(process.argv[2],'배포 EXE 경로를 입력하세요.');const executablePath=path.resolve(process.argv[2]);const app=await _electron.launch({executablePath,args:['--running-apps']});try{
+ const info=await app.evaluate(({app})=>({packaged:app.isPackaged,path:app.getAppPath()}));assert.equal(info.packaged,true);assert.ok(info.path.endsWith(path.join('resources','app')));
+ const page=await app.firstWindow(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.waitForFunction(()=>started&&!runningBusy&&roster.length>0&&document.body.classList.contains('compact'),null,{timeout:60000});
+ assert.ok(await page.evaluate(()=>roster.every(a=>a.source==='running'&&a.image)));
+ for(const game of ['dungeon','jump','battle','bowling','tower','fishing','farm']){await page.evaluate(next=>{if(next===mode)start({focus:false});else {switchWidgetMode(next);start({focus:false});}auto=false;updateAuto();paused=true;},game);assert.equal(await page.evaluate(()=>mode),game);await page.waitForTimeout(80);if(game==='bowling'){assert.equal(await page.locator('#bowling-frames li').count(),10);assert.equal(await page.locator('#bowling-scoreboard').evaluate(el=>el.scrollHeight<=el.clientHeight),true);}}
+ const state=await app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];return {bounds:w.getBounds(),resizable:w.isResizable()};});assert.equal(state.bounds.width,560);assert.equal(state.bounds.height,355);assert.equal(state.resizable,false);assert.deepEqual(errors,[]);
+ console.log('PASS: packaged EXE launches without a project argument, loads real Windows icons and all seven modes inside the fixed widget.');
+}finally{await app.close();}})().catch(error=>{console.error(error);process.exit(1);});

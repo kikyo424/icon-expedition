@@ -2,7 +2,7 @@ const {chromium}=require('playwright');const {pathToFileURL}=require('node:url')
 (async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{
  const page=await browser.newPage({viewport:{width:560,height:355}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>{window.apps=Array.from({length:6},(_,i)=>({id:'app-'+i,name:'앱 '+i,source:'running',hp:160,atk:20,color:'#c5db9f',emoji:['📁','🌐','🗑️','🌸','🎵','📦'][i],iconSizePx:32,role:'앱 모험가'}));window.desktop={getRunningApps:async()=>apps,getIcons:async()=>[],setCompact:async()=>{},togglePin:async()=>true};});
- await page.goto(pathToFileURL(path.resolve('index.html')).href);await page.waitForFunction(()=>started);await page.locator('#widget-menu-toggle').click();await page.locator('[data-widget-mode="battle"]').click();
+ await page.goto(pathToFileURL(path.resolve('index.html')).href);await page.waitForFunction(()=>started);await page.locator('#widget-menu-toggle').click();await page.locator('[data-widget-mode="battle"]').click();if(await page.evaluate(()=>!started&&selected.length>=(mode==='battle'?2:1)))await page.locator('#overlay-start').click();
  const before=await page.evaluate(()=>actors.reduce((sum,a)=>sum+Math.hypot(a.x-480,a.y-280),0));await page.waitForTimeout(1600);
  assert.ok(await page.evaluate(()=>actors.filter(a=>a.hp>0).reduce((sum,a)=>sum+Math.hypot(a.x-480,a.y-280),0))<before*.7);assert.equal(await page.evaluate(()=>turnState.round),0);
  await page.screenshot({path:'brawl-preview.png',omitBackground:true});
